@@ -19,6 +19,13 @@
 
 namespace ase {
 
+// グリッドごとに割り当てられる.
+// データチャンクごとに異なる情報を割り当てるときに利用する.
+struct Partition {
+  int grids;        // グリッド数
+  int threads;        // スレッド数 (readonly)
+};
+
 // ASE ディスクリプタ. ホストとカーネルで圧縮パラメータとして利用する.
 // 構造体のメンバは, 一度セットしたら読み取りのみ (readonly) として取り扱うこと.
 struct CompDescriptor {
@@ -26,13 +33,11 @@ struct CompDescriptor {
   int global_counter; // グローバルカウンター (readonly)
   int chunk_size;     // 1スレッドに割り当てられるデータチャンクのサイズ (readonly)
   int total_size;     // 圧縮前データのサイズ (readonly)
-  int threads;        // スレッド数 (readonly)
 };
 
 struct DecompDescriptor {
   int entry_size;     // エントリー数 (readonly)
   int global_counter; // グローバルカウンター (readonly)
-  int threads;        // スレッド数 (readonly)
   long *counts;       // ビットのカウント数 (readonly)
 };
 
@@ -58,9 +63,13 @@ std::tuple<long, Buffer*> compress(const char *input_data, const CompDescriptor 
 std::tuple<long, char*> decompress(Buffer *buffer, const DecompDescriptor *descs);
 
 // 並列 ASE 圧縮を行うカーネル関数
-std::tuple<long*, Buffer**> parallel_compress(const char *input_data, const CompDescriptor **desc);
+std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
+                                              const CompDescriptor **desc,
+                                              const Partition *partition);
 
 // 並列 ASE 圧縮を行うカーネル関数
-std::tuple<long, char*> parallel_decompress(Buffer **buffer, const DecompDescriptor **desc);
+std::tuple<long, char*> parallel_decompress(Buffer **buffer,
+                                            const DecompDescriptor **desc,
+                                            const Partition *partition);
 
 } // namespace ase

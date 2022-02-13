@@ -442,13 +442,15 @@ void host_decompress(Buffer *input_buf,
 
 // ホスト側で ASE 圧縮の準備を行う. 入力ストリームと ASE 設定プロファイルを PCI 転送でデバイスに
 // コピーする.
-std::tuple<long*, Buffer**> parallel_compress(const char *input_data, const CompDescriptor **descs) {
+std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
+                                              const CompDescriptor **descs,
+                                              const Partition *partition) {
   char *d_input_data, *d_output_data, *output_data;
   long *counts, *d_counts;
-  CompDescriptor **d_descs;
+  const CompDescriptor **d_descs;
   Buffer **buffers;
 
-  const int threads = descs[0]->threads;
+  const int threads = partition->threads;
   const int total_size = descs[0]->total_size;
   const int chunk_size = descs[0]->chunk_size;
   int lack_threads = 0;
@@ -468,7 +470,7 @@ std::tuple<long*, Buffer**> parallel_compress(const char *input_data, const Comp
   cudaMemcpy(d_descs, descs, sizeof(ase::CompDescriptor), cudaMemcpyHostToDevice);
 
   // スレッド数が1より多い場合は, 入力ストリームを十分に分割できないので, 不足しているスレッド数の計算を行う.
-  if (descs[0]->threads > 1) {
+  if (threads > 1) {
     int remaining = total_size - (total_size / threads) * threads;
     if (remaining <= chunk_size) {
       lack_threads = 1;
@@ -481,7 +483,7 @@ std::tuple<long*, Buffer**> parallel_compress(const char *input_data, const Comp
   buffers = malloc_ase_buffer(threads + lack_threads);
 
   // カーネル関数呼び出し
-  kernel_compress<<<1, threads + lack_threads>>>(d_input_data, buffers, d_counts, d_descs);
+  kernel_compress<<<partition->grids, threads + lack_threads>>>(d_input_data, buffers, d_counts, d_descs);
 
   // すべてのスレッドが処理を完了するまで待つ
   cudaDeviceSynchronize();
@@ -509,7 +511,9 @@ std::tuple<long*, Buffer**> parallel_compress(const char *input_data, const Comp
   };
 }
 
-std::tuple<long, char*> parallel_decompress(Buffer *buffer, const DecompDescriptor **descs) {
+std::tuple<long, char*> parallel_decompress(Buffer **buffer,
+                                            const DecompDescriptor **descs,
+                                            const Partition *Partition) {
   return {
     0,
     ""
