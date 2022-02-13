@@ -9,7 +9,7 @@
 #include <tuple>
 
 // 入力ストリームのバッファサイズ
-#define D_SIZE 50 * 1024 * 1000
+#define D_SIZE 50 * 1024 * 1024
 // ルックアップテーブルのエントリー数
 #define E_LENGTH 8
 // エントロピーカリングカウント
@@ -66,9 +66,9 @@ struct Buffer {
 
 int correct_threads(int threads, int total_size, int chunk_size);
 
-CompDescriptor** malloc_comp_descriptors(const Partition *partition, int nread);
+CompDescriptor* malloc_comp_descriptors(const Partition *partition, int nread);
 
-DecompDescriptor** malloc_decomp_descriptors(const Partition *partition, long *counts);
+DecompDescriptor* malloc_decomp_descriptors(const Partition *partition, long *counts);
 
 // ASE 圧縮を行うホスト関数
 std::tuple<long, Buffer*> compress(const char *input_data, const CompDescriptor *descs);
@@ -77,13 +77,13 @@ std::tuple<long, Buffer*> compress(const char *input_data, const CompDescriptor 
 std::tuple<long, char*> decompress(Buffer *buffer, const DecompDescriptor *descs);
 
 // 並列 ASE 圧縮を行うカーネル関数
-std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
-                                              const CompDescriptor **desc,
+std::tuple<long*, Buffer*> parallel_compress(const char *input_data,
+                                              const CompDescriptor *desc,
                                               const Partition *partition);
 
 // 並列 ASE 圧縮を行うカーネル関数
-std::tuple<long, char*> parallel_decompress(Buffer **buffer,
-                                            const DecompDescriptor **desc,
+std::tuple<long, char*> parallel_decompress(Buffer *buffer,
+                                            const DecompDescriptor *desc,
                                             const Partition *partition);
 
 } // namespace ase

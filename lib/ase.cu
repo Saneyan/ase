@@ -46,26 +46,26 @@ int correct_threads(int threads, int total_size, int chunk_size) {
 
   return threads + lack_threads;
 }
-
-CompDescriptor** malloc_comp_descriptors(const Partition *partition, int nread) {
-  CompDescriptor **descs = (CompDescriptor**)malloc(partition->grids * sizeof(CompDescriptor));
+  
+CompDescriptor* malloc_comp_descriptors(const Partition *partition, int nread) {
+  CompDescriptor *descs = (CompDescriptor*)malloc(partition->grids * sizeof(CompDescriptor));
   for (int i = 0; i < partition->grids; i++) {
-    descs[i]->entry_size = partition->allocations[i].entry_size;
-    descs[i]->global_counter = partition->allocations[i].global_counter;
-    descs[i]->chunk_size = nread / partition->allocations[i].threads;
-    descs[i]->total_size = nread / partition->grids;
-    descs[i]->threads = correct_threads(partition->allocations[i].threads, descs[i]->total_size, descs[i]->chunk_size);
+    descs[i].entry_size = partition->allocations[i].entry_size;
+    descs[i].global_counter = partition->allocations[i].global_counter;
+    descs[i].chunk_size = nread / partition->allocations[i].threads;
+    descs[i].total_size = nread / partition->grids;
+    descs[i].threads = correct_threads(partition->allocations[i].threads, descs[i].total_size, descs[i].chunk_size);
   }
   return descs;
 }
 
-DecompDescriptor** malloc_decomp_descriptors(const Partition *partition, long *counts) {
-  DecompDescriptor **descs = (DecompDescriptor**)malloc(partition->grids * sizeof(DecompDescriptor));
+DecompDescriptor* malloc_decomp_descriptors(const Partition *partition, long *counts) {
+  DecompDescriptor *descs = (DecompDescriptor*)malloc(partition->grids * sizeof(DecompDescriptor));
   for (int i = 0; i< partition->grids; i++) {
-    descs[i]->entry_size = partition->allocations[i].entry_size;
-    descs[i]->global_counter = partition->allocations[i].global_counter;
-    descs[i]->threads = partition->allocations[i].threads;
-    descs[i]->counts = counts;
+    descs[i].entry_size = partition->allocations[i].entry_size;
+    descs[i].global_counter = partition->allocations[i].global_counter;
+    descs[i].threads = partition->allocations[i].threads;
+    descs[i].counts = counts;
   }
   return descs;
 }
@@ -86,6 +86,7 @@ Data* malloc_next_ase_data(Buffer* buf) {
 
   if ((new_data = malloc_ase_data()) == NULL)
     return NULL;
+      printf("%d\n", buf->max_width);
   buf->current->next = new_data;
   buf->current = new_data;
   buf->t_offset = 0;
@@ -110,19 +111,19 @@ Buffer* malloc_ase_buffer() {
 }
 
 __host__ __device__
-Buffer** malloc_ase_buffer(int nums) {
-  Buffer **new_bufs = (Buffer**)malloc(nums * sizeof(Buffer));
+Buffer* malloc_ase_buffer(int nums) {
+  Buffer *new_bufs = (Buffer*)malloc(nums * sizeof(Buffer));
   Data *new_data;
   int i;
 
   for (i = 0; i < nums; i++) {
     if ((new_data = malloc_ase_data()) == NULL)
       return NULL;
-    new_bufs[i]->head = new_data;
-    new_bufs[i]->current = new_data;
-    new_bufs[i]->max_width = D_MAX_WIDTH;
-    new_bufs[i]->t_offset = 0;
-    new_bufs[i]->h_offset = 0;
+    new_bufs[i].head = new_data;
+    new_bufs[i].current = new_data;
+    new_bufs[i].max_width = D_MAX_WIDTH;
+    new_bufs[i].t_offset = 0;
+    new_bufs[i].h_offset = 0;
   }
   return new_bufs;
 }
@@ -307,12 +308,12 @@ int entropy_calc(Context *context) {
 // を行う. スレッドが処理すべきデータサイズは ase_settings の chunk_size に定められている.
 __global__
 void kernel_compress(const char *d_input_data,
-                     Buffer **d_out_bufs,
+                     Buffer *d_out_bufs,
                      long *d_counts,
-                     const CompDescriptor **descs) {
+                     const CompDescriptor *descs) {
   int i, m, hit_index;
   char hit_index_m, symbol;
-  const int chunk_size = descs[0]->chunk_size;
+  const int chunk_size = descs[0].chunk_size;
 
   // スレッド番号の計算
   const int idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -320,12 +321,13 @@ void kernel_compress(const char *d_input_data,
   // ルックアップテーブルのエントリ初期化
   char entries[E_LENGTH] = {0};
 
-  Context *context = malloc_ase_context(descs[0]->global_counter);
+  Context *context = malloc_ase_context(descs[0].global_counter);
 
   for (i = 0; i < chunk_size; i++) {
     // オーバーフローチェック. スレッドが処理すべきデータ範囲を超える場合には処理を終了する.
-    if (idx * chunk_size + i > descs[0]->total_size)
+    if (idx * chunk_size + i > descs[0].total_size) {
       break;
+    }
 
     // シンボルがヒットするかどうかを確認し, ルックアップテーブルを操作する.
     symbol = d_input_data[idx * chunk_size + i];
@@ -335,8 +337,8 @@ void kernel_compress(const char *d_input_data,
     if (hit_index == -1) {
       d_counts[idx] = d_counts[idx] + 1 + SYM_SIZE;
 
-      write_data_to_buf(d_out_bufs[idx], &CMARK_FALSE, 1);
-      write_data_to_buf(d_out_bufs[idx], &symbol, SYM_SIZE);
+      write_data_to_buf(&d_out_bufs[idx], &CMARK_FALSE, 1);
+      // write_data_to_buf(&d_out_bufs[idx], &symbol, SYM_SIZE);
 
     // ヒットした場合は, cmark ビットを 1 とし, 圧縮してシリアライズする.
     } else {
@@ -345,8 +347,8 @@ void kernel_compress(const char *d_input_data,
 
       d_counts[idx] = d_counts[idx] + 1 + m;
 
-      write_data_to_buf(d_out_bufs[idx], &CMARK_TRUE, 1);
-      write_data_to_buf(d_out_bufs[idx], &hit_index_m, m);
+      // write_data_to_buf(&d_out_bufs[idx], &CMARK_TRUE, 1);
+      // write_data_to_buf(&d_out_bufs[idx], &hit_index_m, m);
     }
   }
 }
@@ -354,10 +356,10 @@ void kernel_compress(const char *d_input_data,
 // ASE 解凍を行うカーネル関数. 入力ストリームを N 分割したストリームをそれぞれのスレッドが ASE 解凍
 // を行う. スレッドが処理すべきデータサイズは ase_settings の chunk_size に定められている.
 __global__
-void kernel_decompress(Buffer **d_input_bufs,
+void kernel_decompress(Buffer *d_input_bufs,
                        char *d_output_data,
                        long *d_counts,
-                       const DecompDescriptor **descs) {
+                       const DecompDescriptor *descs) {
   // int m;
   // int counter = 0;
   // int remaining = settings->bit_size;
@@ -481,15 +483,15 @@ void host_decompress(Buffer *input_buf,
 
 // ホスト側で ASE 圧縮の準備を行う. 入力ストリームと ASE 設定プロファイルを PCI 転送でデバイスに
 // コピーする.
-std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
-                                              const CompDescriptor **descs,
-                                              const Partition *partition) {
+std::tuple<long*, Buffer*> parallel_compress(const char *input_data,
+                                             const CompDescriptor *descs,
+                                             const Partition *partition) {
   char *d_input_data;
   long *counts, *d_counts;
-  const CompDescriptor **d_descs;
-  Buffer **d_out_bufs, **out_bufs;
+  CompDescriptor *d_descs;
+  Buffer *d_out_bufs, *out_bufs;
 
-  const int threads = descs[0]->threads;
+  const int threads = descs[0].threads;
 
   // メモリ確保 (ホスト)
   counts = (long*)malloc(threads * sizeof(long));
@@ -498,22 +500,21 @@ std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
   // メモリ確保 (デバイス)
   cudaMalloc((void**)&d_input_data, D_SIZE);
   cudaMalloc((void**)&d_out_bufs, threads * sizeof(Buffer));
-  cudaMalloc((void**)&d_descs, sizeof(CompDescriptor));
+  cudaMalloc((void**)&d_descs, partition->grids * sizeof(CompDescriptor));
   cudaMalloc((void**)&d_counts, threads * sizeof(long));
 
   // ホストからデバイスにバス転送
   cudaMemcpy(d_input_data, input_data, D_SIZE, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_descs, descs, sizeof(CompDescriptor), cudaMemcpyHostToDevice);
-  cudaMemcpy(d_out_bufs, out_bufs, sizeof(CompDescriptor), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_descs, descs, partition->grids * sizeof(CompDescriptor), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_out_bufs, out_bufs, threads * sizeof(Buffer), cudaMemcpyHostToDevice);
+
+  cudaDeviceSetLimit(cudaLimitMallocHeapSize, descs[0].total_size * 20);
 
   // カーネル関数呼び出し
   kernel_compress<<<partition->grids, threads>>>(d_input_data, d_out_bufs, d_counts, d_descs);
 
   // すべてのスレッドが処理を完了するまで待つ
   cudaDeviceSynchronize();
-
-  // デバイスリセット
-  resetDevice();
 
   // デバイスからホストにバス転送
   cudaMemcpy(out_bufs, d_out_bufs, threads * sizeof(Buffer), cudaMemcpyDeviceToHost);
@@ -525,18 +526,22 @@ std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
   cudaFree(d_out_bufs);
   cudaFree(d_input_data);
 
+  // デバイスリセット
+  resetDevice();
+
   return {
     counts,
     out_bufs
   };
 }
 
-std::tuple<long, char*> parallel_decompress(Buffer **buffer,
-                                            const DecompDescriptor **descs,
+std::tuple<long, char*> parallel_decompress(Buffer *buffer,
+                                            const DecompDescriptor *descs,
                                             const Partition *Partition) {
+  char a[] = "";
   return {
     0,
-    ""
+    a
   };
 }
 
