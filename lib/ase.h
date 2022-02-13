@@ -21,9 +21,15 @@ namespace ase {
 
 // グリッドごとに割り当てられる.
 // データチャンクごとに異なる情報を割り当てるときに利用する.
+struct PartitionAllocation {
+  int threads;      // スレッド数 (readonly)
+  int entry_size;
+  int global_counter;
+};
+
 struct Partition {
-  int grids;        // グリッド数
-  int threads;        // スレッド数 (readonly)
+  int grids;        // グリッド数 (readonly)
+  PartitionAllocation *allocations;
 };
 
 // ASE ディスクリプタ. ホストとカーネルで圧縮パラメータとして利用する.
@@ -33,11 +39,13 @@ struct CompDescriptor {
   int global_counter; // グローバルカウンター (readonly)
   int chunk_size;     // 1スレッドに割り当てられるデータチャンクのサイズ (readonly)
   int total_size;     // 圧縮前データのサイズ (readonly)
+  int threads;        // スレッド数 (readonly)
 };
 
 struct DecompDescriptor {
   int entry_size;     // エントリー数 (readonly)
   int global_counter; // グローバルカウンター (readonly)
+  int threads;        // スレッド数 (readonly)
   long *counts;       // ビットのカウント数 (readonly)
 };
 
@@ -55,6 +63,12 @@ struct Buffer {
   struct Data* head;      // 先頭ノード
   struct Data* current;   // 現在のノード
 };
+
+int correct_threads(int threads, int total_size, int chunk_size);
+
+CompDescriptor** malloc_comp_descriptors(const Partition *partition, int nread);
+
+DecompDescriptor** malloc_decomp_descriptors(const Partition *partition, long *counts);
 
 // ASE 圧縮を行うホスト関数
 std::tuple<long, Buffer*> compress(const char *input_data, const CompDescriptor *descs);

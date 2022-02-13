@@ -8,10 +8,10 @@
 int test_comp_and_decomp(const char* in_filename,
                          const char* out_filename,
                          const bool parallel_mode,
-                         const ase::Partition *comp_partition,
-                         const ase::Partition *decomp_partition) {
+                         const ase::Partition *comp_partition) {
   size_t nread;
   FILE *in_file, *out_file;
+  ase::PartitionAllocation *allocations;
   ase::CompDescriptor *comp_desc;
   ase::DecompDescriptor *decomp_desc;
   ase::CompDescriptor **comp_descs;
@@ -22,7 +22,7 @@ int test_comp_and_decomp(const char* in_filename,
   std::tuple<long*, ase::Buffer**>cts;
   std::tuple<long, char*>dt;
   std::tuple<long, char*>dts;
-  int i;
+  int i, total_size, chunk_size, threads;
   char *input_data, *output_data;
   long bit_counts, *d_bit_counts, b_time, a_time;
   long comp_time = 0;
@@ -30,33 +30,6 @@ int test_comp_and_decomp(const char* in_filename,
   long read_total_size = 0;
   long comp_total_size = 0;
   long decomp_total_size = 0;
-
-  // 並列実行モード (GPU 処理) の場合
-  if (parallel_mode) {
-    comp_descs = (ase::CompDescriptor**)malloc(comp_partition->grids * sizeof(ase::CompDescriptor));
-    for (i = 0; i < comp_partition->grids; i++) {
-      comp_descs[i]->entry_size = E_LENGTH;
-      comp_descs[i]->global_counter = GLOBAL_C;
-    }
-
-    decomp_descs = (ase::DecompDescriptor**)malloc(decomp_partition->grids * sizeof(ase::DecompDescriptor));
-    for (i = 0; i< decomp_partition->grids; i++) {
-      decomp_descs[i]->entry_size = E_LENGTH;
-      decomp_descs[i]->global_counter = GLOBAL_C;
-      decomp_descs[i]->counts = (long*)malloc(decomp_partition->threads * sizeof(long));
-    }
-
-  // 通常実行モード (CPU 処理) の場合
-  } else {
-    comp_desc = (ase::CompDescriptor*)malloc(sizeof(ase::CompDescriptor));
-    comp_desc->entry_size = E_LENGTH;
-    comp_desc->global_counter = GLOBAL_C;
-
-    decomp_desc = (ase::DecompDescriptor*)malloc(sizeof(ase::DecompDescriptor));
-    decomp_desc->entry_size = E_LENGTH;
-    decomp_desc->global_counter = GLOBAL_C;
-    decomp_desc->counts = (long*)malloc(sizeof(long));
-  }
 
   // データチャンクヒープ
   input_data = (char*)malloc(D_SIZE * sizeof(char));
@@ -69,13 +42,12 @@ int test_comp_and_decomp(const char* in_filename,
     // 1. ファイルシステムから読み込み
     while ((nread = fread(input_data, 1, D_SIZE * sizeof(char), in_file)) > 0) {
       read_total_size += nread;
-      comp_desc->total_size = nread;
 
       // 並列実行モード (GPU 処理) の場合
       if (parallel_mode) {
-        comp_desc->chunk_size = nread / comp_partition->threads;
+        // 2. 圧縮
+        comp_descs = malloc_comp_descriptors(comp_partition, nread);
 
-        // 2. 圧縮の計測
         b_time = timer(); // 計測開始
         cts = ase::parallel_compress(input_data, const_cast<const ase::CompDescriptor**>(comp_descs), comp_partition);
         a_time = timer(); // 計測終了
@@ -85,10 +57,17 @@ int test_comp_and_decomp(const char* in_filename,
         comp_time += (a_time - b_time);
         // comp_total_size += (bit_counts / 8 + (bit_counts % 8 > 0 ? 1 : 0));
 
-        // 3. 解凍の計測
-        decomp_desc->counts = d_bit_counts;
+        // 3. 解凍
+        // 圧縮時のディスクリプタ情報を元に, 解凍用のパーティションを作成.
+        allocations = (ase::PartitionAllocation*)malloc(comp_partition->grids * sizeof(ase::PartitionAllocation));
+        for (i = 0; i < comp_partition->grids; i++)
+          allocations[i] = ase::PartitionAllocation{ comp_descs[i]->threads, E_LENGTH, GLOBAL_C };
+        const ase::Partition decomp_partition = { comp_partition->grids, allocations };
+
+        decomp_descs = malloc_decomp_descriptors(&decomp_partition, d_bit_counts);
+
         b_time = timer(); // 計測開始
-        dt = ase::parallel_decompress(buffers, const_cast<const ase::DecompDescriptor**>(decomp_descs), decomp_partition);
+        dt = ase::parallel_decompress(buffers, const_cast<const ase::DecompDescriptor**>(decomp_descs), &decomp_partition);
         a_time = timer(); // 計測終了
 
         bit_counts = std::get<0>(dt);
@@ -103,9 +82,13 @@ int test_comp_and_decomp(const char* in_filename,
 
       // 通常実行モード (CPU 処理) の場合
       } else {
+        // 2. 圧縮
+        comp_desc = (ase::CompDescriptor*)malloc(sizeof(ase::CompDescriptor));
+        comp_desc->entry_size = E_LENGTH;
+        comp_desc->global_counter = GLOBAL_C;
         comp_desc->chunk_size = nread;
+        comp_desc->total_size = nread;
 
-        // 2. 圧縮の計測
         b_time = timer(); // 計測開始
         ct = ase::compress(input_data, comp_desc);
         a_time = timer(); // 計測終了
@@ -115,8 +98,13 @@ int test_comp_and_decomp(const char* in_filename,
         comp_time += (a_time - b_time);
         comp_total_size += (bit_counts / 8 + (bit_counts % 8 > 0 ? 1 : 0));
 
-        // 3. 解凍の計測
+        // 3. 解凍
+        decomp_desc = (ase::DecompDescriptor*)malloc(sizeof(ase::DecompDescriptor));
+        decomp_desc->entry_size = E_LENGTH;
+        decomp_desc->global_counter = GLOBAL_C;
+        decomp_desc->counts = (long*)malloc(sizeof(long));
         decomp_desc->counts[0] = bit_counts;
+
         b_time = timer(); // 計測開始
         dt = ase::decompress(buffer, decomp_desc);
         a_time = timer(); // 計測終了

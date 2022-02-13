@@ -31,6 +31,45 @@ int resetDevice() {
   return 0;
 }
 
+// スレッド数が1より多い場合は, 入力ストリームを十分に分割できないので, 不足しているスレッド数の計算を行う.
+int correct_threads(int threads, int total_size, int chunk_size) {
+  int lack_threads = 0;
+
+  if (threads > 1) {
+    int remaining = total_size - (total_size / threads) * threads;
+    if (remaining <= chunk_size) {
+      lack_threads = 1;
+    } else {
+      lack_threads = (remaining / chunk_size) + 1;
+    }
+  }
+
+  return threads + lack_threads;
+}
+
+CompDescriptor** malloc_comp_descriptors(const Partition *partition, int nread) {
+  CompDescriptor **descs = (CompDescriptor**)malloc(partition->grids * sizeof(CompDescriptor));
+  for (int i = 0; i < partition->grids; i++) {
+    descs[i]->entry_size = partition->allocations[i].entry_size;
+    descs[i]->global_counter = partition->allocations[i].global_counter;
+    descs[i]->chunk_size = nread / partition->allocations[i].threads;
+    descs[i]->total_size = nread / partition->grids;
+    descs[i]->threads = correct_threads(partition->allocations[i].threads, descs[i]->total_size, descs[i]->chunk_size);
+  }
+  return descs;
+}
+
+DecompDescriptor** malloc_decomp_descriptors(const Partition *partition, long *counts) {
+  DecompDescriptor **descs = (DecompDescriptor**)malloc(partition->grids * sizeof(DecompDescriptor));
+  for (int i = 0; i< partition->grids; i++) {
+    descs[i]->entry_size = partition->allocations[i].entry_size;
+    descs[i]->global_counter = partition->allocations[i].global_counter;
+    descs[i]->threads = partition->allocations[i].threads;
+    descs[i]->counts = counts;
+  }
+  return descs;
+}
+
 __host__ __device__
 Data* malloc_ase_data() {
   Data *new_data;
@@ -445,45 +484,30 @@ void host_decompress(Buffer *input_buf,
 std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
                                               const CompDescriptor **descs,
                                               const Partition *partition) {
-  char *d_input_data, *d_output_data, *output_data;
+  char *d_input_data;
   long *counts, *d_counts;
   const CompDescriptor **d_descs;
-  Buffer **buffers;
+  Buffer **d_out_bufs, **out_bufs;
 
-  const int threads = partition->threads;
-  const int total_size = descs[0]->total_size;
-  const int chunk_size = descs[0]->chunk_size;
-  int lack_threads = 0;
+  const int threads = descs[0]->threads;
 
   // メモリ確保 (ホスト)
-  output_data = (char*)malloc(D_SIZE * sizeof(char));
   counts = (long*)malloc(threads * sizeof(long));
+  out_bufs = malloc_ase_buffer(threads);
 
   // メモリ確保 (デバイス)
   cudaMalloc((void**)&d_input_data, D_SIZE);
-  cudaMalloc((void**)&d_output_data, D_SIZE);
-  cudaMalloc((void**)&d_descs, sizeof(ase::CompDescriptor));
+  cudaMalloc((void**)&d_out_bufs, threads * sizeof(Buffer));
+  cudaMalloc((void**)&d_descs, sizeof(CompDescriptor));
   cudaMalloc((void**)&d_counts, threads * sizeof(long));
 
   // ホストからデバイスにバス転送
   cudaMemcpy(d_input_data, input_data, D_SIZE, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_descs, descs, sizeof(ase::CompDescriptor), cudaMemcpyHostToDevice);
-
-  // スレッド数が1より多い場合は, 入力ストリームを十分に分割できないので, 不足しているスレッド数の計算を行う.
-  if (threads > 1) {
-    int remaining = total_size - (total_size / threads) * threads;
-    if (remaining <= chunk_size) {
-      lack_threads = 1;
-    } else {
-      lack_threads = (remaining / chunk_size) + 1;
-    }
-    printf("Lack threads: %d\n", lack_threads);
-  }
-
-  buffers = malloc_ase_buffer(threads + lack_threads);
+  cudaMemcpy(d_descs, descs, sizeof(CompDescriptor), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_out_bufs, out_bufs, sizeof(CompDescriptor), cudaMemcpyHostToDevice);
 
   // カーネル関数呼び出し
-  kernel_compress<<<partition->grids, threads + lack_threads>>>(d_input_data, buffers, d_counts, d_descs);
+  kernel_compress<<<partition->grids, threads>>>(d_input_data, d_out_bufs, d_counts, d_descs);
 
   // すべてのスレッドが処理を完了するまで待つ
   cudaDeviceSynchronize();
@@ -492,22 +516,18 @@ std::tuple<long*, Buffer**> parallel_compress(const char *input_data,
   resetDevice();
 
   // デバイスからホストにバス転送
-  cudaMemcpy(output_data, d_output_data, D_SIZE, cudaMemcpyDeviceToHost);
+  cudaMemcpy(out_bufs, d_out_bufs, threads * sizeof(Buffer), cudaMemcpyDeviceToHost);
   cudaMemcpy(counts, d_counts, threads * sizeof(long), cudaMemcpyDeviceToHost);
 
   // メモリ解放 (デバイス)
   cudaFree(d_counts);
   cudaFree(d_descs);
-  cudaFree(d_output_data);
+  cudaFree(d_out_bufs);
   cudaFree(d_input_data);
-
-  // メモリ解放 (ホスト)
-  free(counts);
-  free(output_data);
 
   return {
     counts,
-    buffers
+    out_bufs
   };
 }
 
