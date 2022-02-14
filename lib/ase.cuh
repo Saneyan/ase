@@ -67,11 +67,11 @@ int push(Context *context,
 __host__ __device__
 int entropy_calc(Context *context);
 
-__global__
-void kernel_compress(const char *d_input_data,
-                     Buffer *d_out_bufs,
-                     long *d_counts,
-                     const CompDescriptor *descs);
+// __global__
+// void kernel_compress(const char *d_input_data,
+//                      Buffer *d_out_bufs,
+//                      long *d_counts,
+//                      const CompDescriptor *descs);
 
 __global__
 void kernel_decompress(Buffer **d_input_bufs,
