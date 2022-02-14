@@ -16,7 +16,7 @@
 #include "ase.cuh"
 
 #define C_WORST_RATE 1.1
-#define NUM_PARTITIONS_LIMIT 128
+#define NUM_PARTITIONS_LIMIT 1024
 
 static const int D_OUT_SIZE = D_SIZE * C_WORST_RATE;
 
@@ -213,8 +213,18 @@ int read_data_from_buf(Buffer* buf, char* data, const unsigned int width) {
 
 __device__
 void next_data(PoolInfo* pi) {
-  pi->index++;
+  pi->t_index++;
   pi->t_offset = 0;
+}
+
+__host__
+int head_data(PoolInfo *pi) {
+  if (pi->h_index > pi->t_index) {
+    return -1;
+  }
+  pi->h_index--;
+  pi->h_offset = 0;
+  return 0;
 }
 
 __host__
@@ -226,7 +236,8 @@ PoolInfo* malloc_pool_info(int nums) {
     pi[i].t_offset = 0;
     pi[i].h_offset = 0;
     pi[i].max_width = D_MAX_WIDTH;
-    pi[i].index = 0;
+    pi[i].t_index = 0;
+    pi[i].h_index = 0;
     pi[i].counts = 0;
   }
   return pi;
@@ -237,50 +248,50 @@ int write_data_to_pool(PoolInfo* pi, char* pool, const char* data, const unsigne
   int shift = pi->max_width - pi->t_offset - width;
 
   if (shift < 0) {
-    *pool |= (unsigned char)*data >> (-1 * shift);
+    *(pool + pi->t_index) |= (unsigned char)*data >> (-1 * shift);
     next_data(pi);
     shift += pi->max_width;
   }
-  *pool |= *data << shift;
+  *(pool + pi->t_index) |= *data << shift;
   pi->t_offset = pi->max_width - shift;
   pi->counts += width;
 
   return 0;
 }
 
-// __device__
-// int read_data_from_pool(Buffer* buf, char* data, const unsigned int width) {
-//   int shift = buf->max_width - buf->h_offset - width;
-//   int remaining = 0;
-//   *data = 0;
+__device__
+int read_data_from_pool(PoolInfo* pi, const char*pool, char* data, const unsigned int width) {
+  int shift = pi->max_width - pi->h_offset - width;
+  int remaining = 0;
+  *data = 0;
 
-//   if (shift < 0) {
-//     *data = (buf->head->data & (
-//       (unsigned char)0xFF >> buf->h_offset
-//     )) << (-1 * shift);
+  if (shift < 0) {
+    *data = (*(pool + pi->h_index) & (
+      (unsigned char)0xFF >> pi->h_offset
+    )) << (-1 * shift);
 
-//     // 不要バッファ解放
-//     if (free_head_ase_buffer(buf) == -1) {
-//       return -1;
-//     }
+    // 不要バッファ解放
+    if (head_data(pi) == -1) {
+      return -1;
+    }
     
-//     remaining = width + shift;
-//     shift += buf->max_width;
-//   }
-//   *data |= (unsigned char)(
-//     buf->head->data & (
-//       (unsigned char)(0xFF << buf->max_width - (width - remaining)) >> buf->h_offset
-//     )) >> shift;
+    remaining = width + shift;
+    shift += pi->max_width;
+  }
+  *data |= (unsigned char)(
+    *(pool + pi->h_index) & (
+      (unsigned char)(0xFF << pi->max_width - (width - remaining)) >> pi->h_offset
+    )) >> shift;
 
-//   buf->h_offset = buf->max_width - shift;
+  pi->h_offset = pi->max_width - shift;
 
-//   if (buf->h_offset == buf->max_width) {
-//     if (free_head_ase_buffer(buf) == -1)
-//       return -1;
-//   } 
+  if (pi->h_offset == pi->max_width) {
+    if (head_data(pi) == -1)
+      return -1;
+  } 
 
-//   return 0;
-// }
+  return 0;
+}
 
 __host__ __device__
 Context* malloc_ase_context(int global_counter) {
@@ -406,16 +417,16 @@ void kernel_compress(const char *d_input_data,
 
     // ヒットしなかった場合は, cmark ビットを 0 とし, 圧縮せずにバッファに追加する (シリアライズ).
     if (hit_index == -1) {
-      write_data_to_pool(d_pi, &d_output_data[tid * desc->output_size], &CMARK_FALSE, 1);
-      write_data_to_pool(d_pi, &d_output_data[tid * desc->output_size], &symbol, SYM_SIZE);
+      write_data_to_pool(&d_pi[tid], &d_output_data[tid * desc->output_size], &CMARK_FALSE, 1);
+      write_data_to_pool(&d_pi[tid], &d_output_data[tid * desc->output_size], &symbol, SYM_SIZE);
 
     // ヒットした場合は, cmark ビットを 1 とし, 圧縮してシリアライズする.
     } else {
       m = entropy_calc(context);
       hit_index_m = hit_index & ((1 << m) - 1);
 
-      write_data_to_pool(d_pi, &d_output_data[tid * desc->output_size], &CMARK_TRUE, 1);
-      write_data_to_pool(d_pi, &d_output_data[tid * desc->output_size], &hit_index_m, m);
+      write_data_to_pool(&d_pi[tid], &d_output_data[tid * desc->output_size], &CMARK_TRUE, 1);
+      write_data_to_pool(&d_pi[tid], &d_output_data[tid * desc->output_size], &hit_index_m, m);
     }
   }
 }
@@ -423,48 +434,48 @@ void kernel_compress(const char *d_input_data,
 // ASE 解凍を行うカーネル関数. 入力ストリームを N 分割したストリームをそれぞれのスレッドが ASE 解凍
 // を行う. スレッドが処理すべきデータサイズは ase_settings の chunk_size に定められている.
 __global__
-void kernel_decompress(Buffer *d_input_bufs,
+void kernel_decompress(const char *d_input_data,
                        char *d_output_data,
-                       long *d_counts,
-                       const DecompDescriptor *descs) {
-  // int m;
-  // int counter = 0;
-  // int remaining = settings->bit_size;
-  // char index_m, cmark, symbol;
-  // char entries[E_LENGTH] = {0};
+                       PoolInfo *d_pi,
+                       const ParallelDecompDescriptor *desc) {
+  int m;
+  const int tid = blockIdx.x;
+  int remaining = d_pi[tid].counts;
+  char index_m, cmark, symbol;
+  char entries[E_LENGTH] = {0};
 
-  // Context *context = malloc_ase_context(settings);
+  Context *context = malloc_ase_context(desc->global_counter);
 
-  // read_data_from_buf(input_buf, &cmark, 1);
+  read_data_from_pool(&d_pi[tid], &d_input_data[tid * desc->input_size], &cmark, 1);
 
-  // while (true) {
-  //   if (cmark == CMARK_TRUE) {
-  //     m = entropy_calc(context);
+  while (true) {
+    if (cmark == CMARK_TRUE) {
+      m = entropy_calc(context);
 
-  //     read_data_from_buf(input_buf, &index_m, m);
-  //     symbol = entries[index_m];
-  //     output_data[counter] = symbol;
+      read_data_from_buf(input_buf, &index_m, m);
+      symbol = entries[index_m];
+      output_data[counter] = symbol;
 
-  //     arrange_table(context, entries, index_m, symbol);
-  //     remaining = remaining - 1 - m;
-  //   } else {
-  //     read_data_from_buf(input_buf, &symbol, SYM_SIZE);
-  //     output_data[counter] = symbol;
+      arrange_table(context, entries, index_m, symbol);
+      remaining = remaining - 1 - m;
+    } else {
+      read_data_from_buf(input_buf, &symbol, SYM_SIZE);
+      output_data[counter] = symbol;
 
-  //     register_to_table(context, entries, symbol);
-  //     remaining = remaining - 1 - SYM_SIZE;
-  //   }
+      register_to_table(context, entries, symbol);
+      remaining = remaining - 1 - SYM_SIZE;
+    }
 
-  //   counter++;
-  //   *counts = *counts + SYM_SIZE;
+    counter++;
+    *counts = *counts + SYM_SIZE;
 
-  //   if (remaining <= 0)
-  //     break;
+    if (remaining <= 0)
+      break;
 
-  //   read_data_from_buf(input_buf, &cmark, 1);
-  // }
+    read_data_from_buf(input_buf, &cmark, 1);
+  }
 
-  // free(context);
+  free(context);
 }
 
 __host__
@@ -553,8 +564,8 @@ void host_decompress(Buffer *input_buf,
 std::tuple<PoolInfo*, char*> parallel_compress(const char *input_data,
                                              const ParallelCompDescriptor *descs,
                                              const Partition *partition) {
-  int i, j, k, l;
-  int *used_block_ids, *d_target_block_ids[NUM_PARTITIONS_LIMIT], *target_block_ids[NUM_PARTITIONS_LIMIT];
+  int i, j;
+  int *d_target_block_ids[NUM_PARTITIONS_LIMIT], *target_block_ids[NUM_PARTITIONS_LIMIT];
   char *d_input_data, *d_output_data, *output_data;
   ParallelCompDescriptor *d_descs[NUM_PARTITIONS_LIMIT];
   PoolInfo *d_pi, *out_pi, *pi;
@@ -563,46 +574,15 @@ std::tuple<PoolInfo*, char*> parallel_compress(const char *input_data,
   pi = malloc_pool_info(partition->num_blocks);
   output_data = (char*)malloc(D_OUT_SIZE);
   out_pi = (PoolInfo*)malloc(partition->num_blocks * sizeof(PoolInfo));
-  used_block_ids = (int*)malloc(partition->num_blocks * sizeof(int));
-  int u = 0;
 
   for (i = 0; i < partition->num_allocations; i++) {
     target_block_ids[i] = (int*)malloc(descs[i].num_blocks * sizeof(int));
-  }
-  for (i = 0; i < partition->num_allocations; i++) {
     for (j = 0; j < partition->num_blocks; j++) {
-      if (partition->allocations[i].num_target_blocks > 0) {
-        for (k = 0; k < partition->allocations[i].num_target_blocks; k++) {
-          if (partition->allocations[i].target_block_ids[k] == j) {
-            target_block_ids[i][k] = j;
-            used_block_ids[u] = j;
-            u++;
-          }
-        }
-      }
+      target_block_ids[i][j] = j;
     }
   }
 
-  bool found = false;
-
-  for (i = 0; i < partition->num_allocations; i++) {
-    for (j = 0; j < partition->num_blocks; j++) {
-      if (partition->allocations[i].num_target_blocks == 0) {
-        for (k = 0; k < descs[i].num_blocks; k++) {
-          for (l = 0; l < u; l++) {
-            if (used_block_ids[l] == j) {
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            target_block_ids[i][k] = j;
-            found = false;
-          }
-        }
-      }
-    }
-  }
+  std::cout << target_block_ids[0][0] << std::endl;
 
   // メモリ確保 (デバイス)
   cudaMalloc((void**)&d_input_data, D_SIZE);
@@ -642,7 +622,11 @@ std::tuple<PoolInfo*, char*> parallel_compress(const char *input_data,
   cudaFree(d_pi);
   cudaFree(d_input_data);
 
-std::cout << out_pi->counts / 8 <<std::endl;
+  //       long total_counts = 0;
+  //       for (int i = 0; i < partition->num_blocks; i++)
+  //         total_counts += out_pi[i].counts;
+
+  // std::cout << total_counts / 8 <<std::endl;
 
   // デバイスリセット
   resetDevice();

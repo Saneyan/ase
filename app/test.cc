@@ -54,7 +54,7 @@ int test_comp_and_decomp(const char* in_filename,
 
         // d_bit_counts = std::get<0>(cts);
         // buffers = std::get<1>(cts);
-        // comp_time += (a_time - b_time);
+        comp_time += (a_time - b_time);
         // comp_total_size += (bit_counts / 8 + (bit_counts % 8 > 0 ? 1 : 0));
 
         // 圧縮後のビット長を集計する.

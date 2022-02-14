@@ -73,7 +73,7 @@ struct Partition {
 struct ParallelCompDescriptor {
   int entry_size;     // エントリー数 (readonly)
   int global_counter; // グローバルカウンター (readonly)
-  int chunk_size;     // 1スレッドに割り当てられるデータチャンクのサイズ (readonly)
+  int chunk_size;     // 1スレッドブロックに割り当てられるデータチャンクのサイズ (readonly)
   int total_size;     // 圧縮前データのサイズ (readonly)
   int output_size;
   int num_blocks;     // ブロックサイズ (readonly)
@@ -93,7 +93,8 @@ struct PoolInfo {
   unsigned int h_offset;  // 1 バイトあたりの領域に対して書き込んだビット数 (head)
   unsigned int t_offset;  // (tail)
   unsigned int max_width; // データの最大の長さ
-  unsigned int index;     // 現在の参照インデックス
+  unsigned int h_index;   // 現在の参照インデックス
+  unsigned int t_index;   // 現在の参照インデックス
   long counts;            // 書き込んだビットのカウント数
 };
 
