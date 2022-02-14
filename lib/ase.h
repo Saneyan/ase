@@ -83,8 +83,9 @@ struct ParallelCompDescriptor {
 struct ParallelDecompDescriptor {
   int entry_size;     // エントリー数 (readonly)
   int global_counter; // グローバルカウンター (readonly)
+  int chunk_size;
   int num_blocks;     // ブロックサイズ (readonly)
-  long *counts;       // ビットのカウント数 (readonly)
+  int input_size;
 };
 
 // メモリプール情報
@@ -95,7 +96,8 @@ struct PoolInfo {
   unsigned int max_width; // データの最大の長さ
   unsigned int h_index;   // 現在の参照インデックス
   unsigned int t_index;   // 現在の参照インデックス
-  long counts;            // 書き込んだビットのカウント数
+  long write_counts;      // 書き込んだビットのカウント数
+  long read_counts;
 };
 
 struct TargetBlock {
@@ -105,7 +107,7 @@ struct TargetBlock {
 
 ParallelCompDescriptor* malloc_parallel_comp_descriptors(const Partition *partition, int nread);
 
-ParallelDecompDescriptor* malloc_parallel_decomp_descriptors(const Partition *partition, long *counts);
+ParallelDecompDescriptor* malloc_parallel_decomp_descriptors(const Partition *partition, int nread);
 
 // ASE 圧縮を行うホスト関数
 std::tuple<long, Buffer*> compress(const char *input_data, const CompDescriptor *descs);
@@ -119,7 +121,8 @@ std::tuple<PoolInfo*, char*> parallel_compress(const char *input_data,
                                               const Partition *partition);
 
 // 並列 ASE 圧縮を行うカーネル関数
-std::tuple<long, char*> parallel_decompress(Buffer *buffer,
+std::tuple<PoolInfo*, char*> parallel_decompress(const char *input_data,
+                                            const PoolInfo *pi,
                                             const ParallelDecompDescriptor *desc,
                                             const Partition *partition);
 

@@ -81,13 +81,16 @@ ParallelCompDescriptor* malloc_parallel_comp_descriptors(const Partition *partit
   return descs;
 }
 
-ParallelDecompDescriptor* malloc_parallel_decomp_descriptors(const Partition *partition, long *counts) {
+ParallelDecompDescriptor* malloc_parallel_decomp_descriptors(const Partition *partition, int nread) {
   ParallelDecompDescriptor *descs = (ParallelDecompDescriptor*)malloc(partition->num_allocations * sizeof(ParallelDecompDescriptor));
+  const int chunk_size = nread / partition->num_blocks;
+  const int input_size = chunk_size * C_WORST_RATE;
   for (int i = 0; i< partition->num_allocations; i++) {
     descs[i].entry_size = partition->allocations[i].entry_size;
     descs[i].global_counter = partition->allocations[i].global_counter;
     descs[i].num_blocks = partition->num_blocks;
-    descs[i].counts = counts;
+    descs[i].chunk_size = chunk_size;
+    descs[i].input_size = input_size;
   }
   return descs;
 }
@@ -217,7 +220,7 @@ void next_data(PoolInfo* pi) {
   pi->t_offset = 0;
 }
 
-__host__
+__device__
 int head_data(PoolInfo *pi) {
   if (pi->h_index > pi->t_index) {
     return -1;
@@ -238,7 +241,8 @@ PoolInfo* malloc_pool_info(int nums) {
     pi[i].max_width = D_MAX_WIDTH;
     pi[i].t_index = 0;
     pi[i].h_index = 0;
-    pi[i].counts = 0;
+    pi[i].write_counts = 0;
+    pi[i].read_counts = 0;
   }
   return pi;
 }
@@ -254,7 +258,7 @@ int write_data_to_pool(PoolInfo* pi, char* pool, const char* data, const unsigne
   }
   *(pool + pi->t_index) |= *data << shift;
   pi->t_offset = pi->max_width - shift;
-  pi->counts += width;
+  pi->write_counts += width;
 
   return 0;
 }
@@ -284,6 +288,7 @@ int read_data_from_pool(PoolInfo* pi, const char*pool, char* data, const unsigne
     )) >> shift;
 
   pi->h_offset = pi->max_width - shift;
+  pi->read_counts += width;
 
   if (pi->h_offset == pi->max_width) {
     if (head_data(pi) == -1)
@@ -440,7 +445,7 @@ void kernel_decompress(const char *d_input_data,
                        const ParallelDecompDescriptor *desc) {
   int m;
   const int tid = blockIdx.x;
-  int remaining = d_pi[tid].counts;
+  int counter = 0;
   char index_m, cmark, symbol;
   char entries[E_LENGTH] = {0};
 
@@ -452,27 +457,24 @@ void kernel_decompress(const char *d_input_data,
     if (cmark == CMARK_TRUE) {
       m = entropy_calc(context);
 
-      read_data_from_buf(input_buf, &index_m, m);
+      read_data_from_pool(&d_pi[tid], &d_input_data[tid * desc->input_size], &index_m, m);
       symbol = entries[index_m];
-      output_data[counter] = symbol;
+      d_output_data[tid * desc->chunk_size + counter] = symbol;
 
       arrange_table(context, entries, index_m, symbol);
-      remaining = remaining - 1 - m;
     } else {
-      read_data_from_buf(input_buf, &symbol, SYM_SIZE);
-      output_data[counter] = symbol;
+      read_data_from_pool(&d_pi[tid], &d_input_data[tid * desc->input_size], &symbol, SYM_SIZE);
+      d_output_data[tid * desc->chunk_size + counter] = symbol;
 
       register_to_table(context, entries, symbol);
-      remaining = remaining - 1 - SYM_SIZE;
     }
 
     counter++;
-    *counts = *counts + SYM_SIZE;
 
-    if (remaining <= 0)
+    if (d_pi->read_counts >= d_pi->write_counts)
       break;
 
-    read_data_from_buf(input_buf, &cmark, 1);
+    read_data_from_pool(&d_pi[tid], &d_input_data[tid * desc->input_size], &cmark, 1);
   }
 
   free(context);
@@ -622,28 +624,82 @@ std::tuple<PoolInfo*, char*> parallel_compress(const char *input_data,
   cudaFree(d_pi);
   cudaFree(d_input_data);
 
-  //       long total_counts = 0;
-  //       for (int i = 0; i < partition->num_blocks; i++)
-  //         total_counts += out_pi[i].counts;
+  // デバイスリセット
+  resetDevice();
 
-  // std::cout << total_counts / 8 <<std::endl;
+  return {
+    out_pi,
+    output_data
+  };
+}
+
+std::tuple<PoolInfo*, char*> parallel_decompress(const char* input_data,
+                                            const PoolInfo *pi,
+                                            const ParallelDecompDescriptor *descs,
+                                            const Partition *partition) {
+  int i, j;
+  int *d_target_block_ids[NUM_PARTITIONS_LIMIT], *target_block_ids[NUM_PARTITIONS_LIMIT];
+  char *d_input_data, *d_output_data, *output_data;
+  ParallelDecompDescriptor *d_descs[NUM_PARTITIONS_LIMIT];
+  PoolInfo *d_pi, *out_pi;
+
+  // メモリ確保 (ホスト)
+  output_data = (char*)malloc(D_SIZE);
+  out_pi = (PoolInfo*)malloc(partition->num_blocks * sizeof(PoolInfo));
+
+  for (i = 0; i < partition->num_allocations; i++) {
+    target_block_ids[i] = (int*)malloc(descs[i].num_blocks * sizeof(int));
+    for (j = 0; j < partition->num_blocks; j++) {
+      target_block_ids[i][j] = j;
+    }
+  }
+
+  std::cout << target_block_ids[0][0] << std::endl;
+
+  // メモリ確保 (デバイス)
+  cudaMalloc((void**)&d_input_data, D_OUT_SIZE);
+  cudaMalloc((void**)&d_output_data, D_SIZE);
+  cudaMalloc((void**)&d_pi, partition->num_blocks * sizeof(PoolInfo));
+
+  // ホストからデバイスにバス転送
+  cudaMemcpy(d_input_data, input_data, D_SIZE, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_pi, pi, partition->num_blocks * sizeof(PoolInfo), cudaMemcpyHostToDevice);
+
+  // 並行カーネル関数呼び出し (non-blocking)
+  for (i = 0; i < partition->num_allocations; i++) {
+    cudaMalloc((void**)&d_descs[i], sizeof(ParallelDecompDescriptor));
+    // cudaMalloc((void**)&d_target_block_ids[i], descs[i].num_blocks * sizeof(int));
+    cudaMemcpy(d_descs[i], &descs[i], sizeof(ParallelDecompDescriptor), cudaMemcpyHostToDevice);
+    // cudaMemcpy(d_target_block_ids[i], target_block_ids[i], descs[i].num_blocks * sizeof(int), cudaMemcpyHostToDevice);
+
+    kernel_decompress<<<descs[i].num_blocks, 1>>>(d_input_data, d_output_data, d_pi, d_descs[i]);
+  }
+
+  // すべてのスレッドが処理を完了するまで待つ
+  cudaDeviceSynchronize();
+
+  // デバイスからホストにバス転送
+  cudaMemcpy(output_data, d_output_data, D_SIZE, cudaMemcpyDeviceToHost);
+  cudaMemcpy(out_pi, d_pi, partition->num_blocks * sizeof(PoolInfo), cudaMemcpyDeviceToHost);
+
+  // アロケーションごとのメモリ解放
+  for (i = 0; i < partition->num_allocations; i++) {
+    free(target_block_ids[i]);
+    cudaFree(d_descs[i]);
+    cudaFree(d_target_block_ids[i]);
+  }
+
+  // メモリ解放 (デバイス)
+  cudaFree(d_output_data);
+  cudaFree(d_pi);
+  cudaFree(d_input_data);
 
   // デバイスリセット
   resetDevice();
 
   return {
-    d_pi,
+    out_pi,
     output_data
-  };
-}
-
-std::tuple<long, char*> parallel_decompress(Buffer *buffer,
-                                            const ParallelDecompDescriptor *descs,
-                                            const Partition *Partition) {
-  char a[] = "";
-  return {
-    0,
-    a
   };
 }
 

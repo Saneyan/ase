@@ -73,11 +73,11 @@ int entropy_calc(Context *context);
 //                      long *d_counts,
 //                      const CompDescriptor *descs);
 
-__global__
-void kernel_decompress(Buffer **d_input_bufs,
-                       char *d_output_data,
-                       long *d_counts,
-                       const DecompDescriptor *descs);
+// __global__
+// void kernel_decompress(Buffer **d_input_bufs,
+//                        char *d_output_data,
+//                        long *d_counts,
+//                        const DecompDescriptor *descs);
 
 __host__
 void host_compress(const char *input_data,

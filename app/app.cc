@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
   };
   const ase::Partition comp_partition = { 1024, NUM_ALLOC, allocations };
 
-  test_comp_and_decomp(in_filename, out_filename, false, &comp_partition);
+  test_comp_and_decomp(in_filename, out_filename, true, &comp_partition);
 
   return 0;
 }
