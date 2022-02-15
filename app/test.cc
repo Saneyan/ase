@@ -54,6 +54,7 @@ int test_comp_and_decomp(const char* in_filename,
         cts = ase::parallel_compress(input_data, const_cast<const ase::ParallelCompDescriptor*>(comp_descs), comp_partition);
         a_time = timer(); // 計測終了
 
+        // 集計
         pi = std::get<0>(cts);
         p_data = std::get<1>(cts);
         comp_time += (a_time - b_time);
@@ -78,6 +79,7 @@ int test_comp_and_decomp(const char* in_filename,
         dts = ase::parallel_decompress(p_data, pi, const_cast<const ase::ParallelDecompDescriptor*>(decomp_descs), decomp_partition);
         a_time = timer(); // 計測終了
 
+        // 集計
         pi = std::get<0>(dts);
         output_data = std::get<1>(dts);
         decomp_time += (a_time - b_time);
@@ -104,6 +106,7 @@ int test_comp_and_decomp(const char* in_filename,
         ct = ase::compress(input_data, comp_desc);
         a_time = timer(); // 計測終了
 
+        // 集計
         bit_counts = std::get<0>(ct);
         buffer = std::get<1>(ct);
         comp_time += (a_time - b_time);
@@ -119,6 +122,7 @@ int test_comp_and_decomp(const char* in_filename,
         dt = ase::decompress(buffer, decomp_desc);
         a_time = timer(); // 計測終了
 
+        // 集計
         bit_counts = std::get<0>(dt);
         output_data = std::get<1>(dt);
         decomp_time += (a_time - b_time);
@@ -138,6 +142,7 @@ int test_comp_and_decomp(const char* in_filename,
     return 1;
   }
 
+  // 結果出力
   std::cout << "Filename: "           << in_filename << std::endl;
   std::cout << "Raw: "                << read_total_size << " bytes" << std::endl;
   std::cout << "Compressed: "         << comp_total_size << " bytes" << std::endl;
@@ -146,6 +151,7 @@ int test_comp_and_decomp(const char* in_filename,
   std::cout << "Compression time: "   << comp_time << " ms" << std::endl;
   std::cout << "Decompression time: " << decomp_time << " ms" << std::endl;
 
+  free(output_data);
   free(input_data);
 
   return 0;

@@ -52,9 +52,11 @@ int correct_num_blocks(int num_blocks, int total_size, int chunk_size) {
   return num_blocks + lack_blocks;
 }
 
+// 並列実行モードにおける圧縮ディスクリプタ.
 ParallelCompDescriptor* malloc_parallel_comp_descriptors(const Partition *partition, int nread) {
+  // パーティション数の制限
   if (partition->num_allocations > NUM_PARTITIONS_LIMIT) {
-    fprintf(stderr, "Cannot apply more than 128 partition allocations.");
+    fprintf(stderr, "Cannot apply more than %d partition allocations.", NUM_PARTITIONS_LIMIT);
     return NULL;
   }
 
@@ -81,6 +83,7 @@ ParallelCompDescriptor* malloc_parallel_comp_descriptors(const Partition *partit
   return descs;
 }
 
+// 並列実行モードにおける解凍ディスクリプタ.
 ParallelDecompDescriptor* malloc_parallel_decomp_descriptors(const Partition *partition, int nread) {
   ParallelDecompDescriptor *descs = (ParallelDecompDescriptor*)malloc(partition->num_allocations * sizeof(ParallelDecompDescriptor));
   const int chunk_size = nread / partition->num_blocks;
@@ -225,9 +228,6 @@ void next_data(PoolInfo* pi) {
 
 __device__
 int head_data(PoolInfo *pi) {
-  // if (pi->h_index > pi->t_index) {
-  //   return -1;
-  // }
   pi->h_index++;
   pi->h_offset = 0;
   return 0;
@@ -434,6 +434,8 @@ void kernel_compress(const char *d_input_data,
       write_data_to_pool(&d_pi[tid], &d_output_data[tid * desc->output_size], &hit_index_m, m);
     }
   }
+
+  free(context);
 }
 
 // ASE 解凍を行うカーネル関数. 入力ストリームを N 分割したストリームをそれぞれのスレッドが ASE 解凍
@@ -590,8 +592,6 @@ std::tuple<PoolInfo*, char*> parallel_compress(const char *input_data,
     }
   }
 
-  std::cout << target_block_ids[0][0] << std::endl;
-
   // メモリ確保 (デバイス)
   cudaMalloc((void**)&d_input_data, D_SIZE);
   cudaMalloc((void**)&d_output_data, D_OUT_SIZE);
@@ -690,9 +690,9 @@ std::tuple<PoolInfo*, char*> parallel_decompress(const char* input_data,
 
   // アロケーションごとのメモリ解放
   for (i = 0; i < partition->num_allocations; i++) {
-    free(target_block_ids[i]);
+    // free(target_block_ids[i]);
     cudaFree(d_descs[i]);
-    cudaFree(d_target_block_ids[i]);
+    // cudaFree(d_target_block_ids[i]);
   }
 
   // メモリ解放 (デバイス)

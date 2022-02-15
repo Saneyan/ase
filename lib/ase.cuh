@@ -67,17 +67,18 @@ int push(Context *context,
 __host__ __device__
 int entropy_calc(Context *context);
 
-// __global__
-// void kernel_compress(const char *d_input_data,
-//                      Buffer *d_out_bufs,
-//                      long *d_counts,
-//                      const CompDescriptor *descs);
+__global__
+void kernel_compress(const char *d_input_data,
+                     char *d_output_data,
+                     PoolInfo *d_pi,
+                     const ParallelCompDescriptor *desc,
+                     int *target_block_ids);
 
-// __global__
-// void kernel_decompress(Buffer **d_input_bufs,
-//                        char *d_output_data,
-//                        long *d_counts,
-//                        const DecompDescriptor *descs);
+__global__
+void kernel_decompress(const char *d_input_data,
+                       char *d_output_data,
+                       PoolInfo *d_pi,
+                       const ParallelDecompDescriptor *desc);
 
 __host__
 void host_compress(const char *input_data,

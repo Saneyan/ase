@@ -75,7 +75,7 @@ struct ParallelCompDescriptor {
   int global_counter; // グローバルカウンター (readonly)
   int chunk_size;     // 1スレッドブロックに割り当てられるデータチャンクのサイズ (readonly)
   int total_size;     // 圧縮前データのサイズ (readonly)
-  int output_size;
+  int output_size;    // 出力サイズ (readonly)
   int num_blocks;     // ブロックサイズ (readonly)
 };
 
@@ -85,7 +85,7 @@ struct ParallelDecompDescriptor {
   int global_counter; // グローバルカウンター (readonly)
   int chunk_size;
   int num_blocks;     // ブロックサイズ (readonly)
-  int input_size;
+  int input_size;     // 入力サイズ (readonly)
   int total_size;     // 圧縮前データのサイズ (readonly)
 };
 

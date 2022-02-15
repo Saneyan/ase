@@ -21,19 +21,6 @@ typedef char *ase_sym;
 #define SYM_SIZE 8
 #define D_MAX_WIDTH 8
 
-// ref: https://stackoverflow.com/questions/111928/is-there-a-printf-converter-to-print-in-binary-format
-// printf("Leading text "BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(*data));
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte)  \
-  (byte & 0x80 ? '1' : '0'), \
-  (byte & 0x40 ? '1' : '0'), \
-  (byte & 0x20 ? '1' : '0'), \
-  (byte & 0x10 ? '1' : '0'), \
-  (byte & 0x08 ? '1' : '0'), \
-  (byte & 0x04 ? '1' : '0'), \
-  (byte & 0x02 ? '1' : '0'), \
-  (byte & 0x01 ? '1' : '0')
-
 static const char CMARK_TRUE = 1;
 static const char CMARK_FALSE = 0;
 

@@ -18,9 +18,16 @@ build ディレクトリを作成し, CMake と make を実行してコンパイ
 $ mkdir build/
 $ cmake ..
 $ make
+$ ./app
 ```
 
-### Revision
+### Project Structure
+
+* `app/`: ライブラリを用いた圧縮・解凍のプログラムに関するファイル群
+* `lib/`: ASE Coding のライブラリ
+* `old/`: 不要になった過去のソースコード
+
+### Version
 
 #### v0.2.0
 * GPU 実行環境で動作する圧縮機および解凍機を作成
