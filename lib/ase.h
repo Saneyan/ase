@@ -86,6 +86,7 @@ struct ParallelDecompDescriptor {
   int chunk_size;
   int num_blocks;     // ブロックサイズ (readonly)
   int input_size;
+  int total_size;     // 圧縮前データのサイズ (readonly)
 };
 
 // メモリプール情報

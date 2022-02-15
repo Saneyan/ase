@@ -85,12 +85,15 @@ ParallelDecompDescriptor* malloc_parallel_decomp_descriptors(const Partition *pa
   ParallelDecompDescriptor *descs = (ParallelDecompDescriptor*)malloc(partition->num_allocations * sizeof(ParallelDecompDescriptor));
   const int chunk_size = nread / partition->num_blocks;
   const int input_size = chunk_size * C_WORST_RATE;
+  int remaining_blocks = correct_num_blocks(partition->num_blocks, nread, chunk_size);
+
   for (int i = 0; i< partition->num_allocations; i++) {
     descs[i].entry_size = partition->allocations[i].entry_size;
     descs[i].global_counter = partition->allocations[i].global_counter;
-    descs[i].num_blocks = partition->num_blocks;
     descs[i].chunk_size = chunk_size;
     descs[i].input_size = input_size;
+    descs[i].total_size = nread;
+    descs[i].num_blocks = remaining_blocks;
   }
   return descs;
 }
@@ -222,10 +225,10 @@ void next_data(PoolInfo* pi) {
 
 __device__
 int head_data(PoolInfo *pi) {
-  if (pi->h_index > pi->t_index) {
-    return -1;
-  }
-  pi->h_index--;
+  // if (pi->h_index > pi->t_index) {
+  //   return -1;
+  // }
+  pi->h_index++;
   pi->h_offset = 0;
   return 0;
 }
@@ -274,7 +277,6 @@ int read_data_from_pool(PoolInfo* pi, const char*pool, char* data, const unsigne
       (unsigned char)0xFF >> pi->h_offset
     )) << (-1 * shift);
 
-    // 不要バッファ解放
     if (head_data(pi) == -1) {
       return -1;
     }
@@ -407,7 +409,6 @@ void kernel_compress(const char *d_input_data,
 
   const int tid = target_block_ids[blockIdx.x];
 
-  // ルックアップテーブルのエントリ初期化
   char entries[E_LENGTH] = {0};
   Context *context = malloc_ase_context(desc->global_counter);
 
@@ -416,7 +417,6 @@ void kernel_compress(const char *d_input_data,
     if (tid * desc->chunk_size + i > desc->total_size)
       break;
 
-    // シンボルがヒットするかどうかを確認し, ルックアップテーブルを操作する.
     symbol = d_input_data[tid * desc->chunk_size + i];
     hit_index = push(context, entries, symbol);
 
@@ -445,6 +445,7 @@ void kernel_decompress(const char *d_input_data,
                        const ParallelDecompDescriptor *desc) {
   int m;
   const int tid = blockIdx.x;
+  int remaining = d_pi[tid].write_counts;
   int counter = 0;
   char index_m, cmark, symbol;
   char entries[E_LENGTH] = {0};
@@ -461,17 +462,22 @@ void kernel_decompress(const char *d_input_data,
       symbol = entries[index_m];
       d_output_data[tid * desc->chunk_size + counter] = symbol;
 
+      remaining = remaining - 1 - m;
+
       arrange_table(context, entries, index_m, symbol);
     } else {
       read_data_from_pool(&d_pi[tid], &d_input_data[tid * desc->input_size], &symbol, SYM_SIZE);
       d_output_data[tid * desc->chunk_size + counter] = symbol;
+
+      remaining = remaining - 1 - SYM_SIZE;
 
       register_to_table(context, entries, symbol);
     }
 
     counter++;
 
-    if (d_pi->read_counts >= d_pi->write_counts)
+    if (remaining <= 0)
+    // if ((d_pi[tid].read_counts / 8) >= desc->chunk_size)
       break;
 
     read_data_from_pool(&d_pi[tid], &d_input_data[tid * desc->input_size], &cmark, 1);
@@ -662,7 +668,7 @@ std::tuple<PoolInfo*, char*> parallel_decompress(const char* input_data,
   cudaMalloc((void**)&d_pi, partition->num_blocks * sizeof(PoolInfo));
 
   // ホストからデバイスにバス転送
-  cudaMemcpy(d_input_data, input_data, D_SIZE, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_input_data, input_data, D_OUT_SIZE, cudaMemcpyHostToDevice);
   cudaMemcpy(d_pi, pi, partition->num_blocks * sizeof(PoolInfo), cudaMemcpyHostToDevice);
 
   // 並行カーネル関数呼び出し (non-blocking)

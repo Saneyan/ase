@@ -65,7 +65,7 @@ int test_comp_and_decomp(const char* in_filename,
         comp_total_size += (total_counts / 8 + (total_counts % 8 > 0 ? 1 : 0));
 
         // 3. 解凍
-        // 圧縮時のディスクリプタ情報を元に, 解凍用のパーティションを作成.
+        // 圧縮時のディスクリプタ情報を元に, 解凍用のパーティションを作成 (パーティションの復元).
         allocations = (ase::PartitionAllocation*)malloc(comp_partition->num_allocations * sizeof(ase::PartitionAllocation));
         for (i = 0; i < comp_partition->num_allocations; i++)
           allocations[i] = ase::PartitionAllocation{ E_LENGTH, GLOBAL_C, NULL };
