@@ -1,6 +1,6 @@
 # ASE Coding
 
-このプロジェクトは, ASE Coding をリファレンス実装である. CPU および GPU (CUDA) の実行環境で動作する.
+このプロジェクトは, ASE Coding のリファレンス実装である. CPU および GPU (CUDA) の実行環境で動作する.
 
 ### Requirements 
 
