@@ -15,7 +15,7 @@ build ディレクトリを作成し, CMake と make を実行してコンパイ
 コンパイル後は, build ディレクトリに実行可能なファイル app が作成されているので, このファイルを実行すること.
 
 ```bash
-$ mkdir build/
+$ mkdir build/; cd build/
 $ cmake ..
 $ make
 $ ./app
