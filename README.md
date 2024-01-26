@@ -1,5 +1,6 @@
 # ASE Coding
 
+Parallelize stream-based lossless data compression using GPU with Adaptive Stream-based Entropy Coding (ASE Coding) algorithm.
 This project is the reference implementation of ASE Coding. Sample programs run on CPU and CUDA-based GPU.
 
 ### Requirements 
